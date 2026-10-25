@@ -153,7 +153,7 @@ anyhow      = "1"
 
 ---
 
-### 🔲 PHASE 3 — Player
+### ✅ PHASE 3 — Player
 
 **Goal:** Play and stop an audio stream using `mpv` as a child process.
 
@@ -189,7 +189,7 @@ anyhow      = "1"
 
 ---
 
-### 🔲 PHASE 4 — TUI Shell + Map
+### ✅ PHASE 4 — TUI Shell + Map
 
 **Goal:** Full-screen terminal with a scrollable, zoomable map. `q` quits cleanly.
 
@@ -243,7 +243,7 @@ anyhow      = "1"
 
 ---
 
-### 🔲 PHASE 5 — Markers
+### ✅ PHASE 5 — Markers
 
 **Goal:** Each station renders as a pulsing green dot on the correct geographic position.
 
@@ -266,7 +266,7 @@ anyhow      = "1"
 
 ---
 
-### 🔲 PHASE 6 — Crosshair + Selection
+### ✅ PHASE 6 — Crosshair + Selection
 
 **Goal:** A `⌖` crosshair drawn at screen center. The nearest station is highlighted yellow. Status bar shows station name.
 
@@ -308,7 +308,7 @@ anyhow      = "1"
 
 ---
 
-### 🔲 PHASE 7 — Playback
+### ✅ PHASE 7 — Playback
 
 **Goal:** `Enter` plays selected station. `Space` stops. Status bar reflects state.
 
@@ -331,7 +331,7 @@ anyhow      = "1"
 
 ---
 
-### 🔲 PHASE 8 — Expand Stations
+### ✅ PHASE 8 — Expand Stations
 
 **Goal:** Replace 5 test stations with ~500 real global stations from Radio Browser API.
 
@@ -354,7 +354,7 @@ anyhow      = "1"
 
 ---
 
-### 🔲 PHASE 9 — Polish
+### ✅ PHASE 9 — Polish
 
 **Tasks (in priority order):**
 1. **Resize:** On `Event::Resize(w, h)`, call `map.set_size(w as usize, h as usize - 1)`.
