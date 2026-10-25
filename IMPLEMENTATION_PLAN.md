@@ -1,85 +1,131 @@
-# RadioTerm — Terminal Radio Garden
+# RadioTerm — Implementation Plan
 
-> **For the AI:** Read the current phase only. Do one task, run it, verify it works, then move to the next. Never skip ahead. If stuck, check the **Rescue Rules** section at the bottom.
-
----
-
-## Project Snapshot
-
-| Item | Value |
-|---|---|
-| Language | Rust (2021 edition) |
-| Map library | `terminalmap` crate (from `https://github.com/psmux/TerminalMap`) |
-| Audio | Spawn `mpv --no-video <url>` as a child process |
-| Station data | Bundled JSON file (`stations.json`) — top ~500 global stations |
-| Interaction | Center-crosshair pattern: pan map → Enter to play nearest station |
-| TUI framework | `ratatui` + `crossterm` (already used by terminalmap) |
+> **For the AI:** Read only the current phase. Complete it, verify it works, then move to the next.
+> Never skip phases. When stuck, go directly to **Rescue Rules**.
 
 ---
 
-## Directory Layout (target)
+## Project Layout
 
 ```
-radio/
-├── Cargo.toml
-├── stations.json          ← bundled station list (lat, lon, name, stream_url)
-├── src/
-│   ├── main.rs            ← event loop, terminal setup/teardown
-│   ├── app.rs             ← App state struct, update logic
-│   ├── map_view.rs        ← MapState wrapper, marker sync
-│   ├── player.rs          ← mpv child process controller
-│   └── stations.rs        ← Station struct, load/parse stations.json
+radio/                          ← project root (you are here)
+├── Cargo.toml                  ← workspace root
+├── stations.json               ← bundled station data
+├── IMPLEMENTATION_PLAN.md      ← this file
+├── TerminalMap/                ← local map library (do NOT edit)
+│   ├── Cargo.toml
+│   └── src/
+│       ├── widget.rs           ← MapState API  (read this for map usage)
+│       ├── marker.rs           ← MapMarker API (read this for dots/pins)
+│       └── ...
+└── src/
+    ├── main.rs                 ← event loop, terminal setup/teardown
+    ├── app.rs                  ← App state, selection logic
+    ├── map_view.rs             ← MapState wrapper + marker sync
+    ├── player.rs               ← mpv child process controller
+    └── stations.rs             ← Station struct, load stations.json
 ```
 
 ---
 
-## Phases (work one phase at a time)
+## Key APIs (memorise these, reference TerminalMap/src/ for details)
 
-### ✅ PHASE 0 — Repo & Scaffolding
-**Status:** `DONE` (git repo already initialized)
+```rust
+// --- Map setup ---
+use terminalmap::{widget::MapState, config::MapConfig};
+let mut map = MapState::new(MapConfig::default()).await?;
+map.set_size(width_chars, height_chars);      // terminal size in chars
+let frame: String = map.render().await?;      // returns ANSI string, print it
+
+// --- Pan / Zoom ---
+map.center_lat += delta;
+map.center_lon += delta;
+map.zoom += 1.0;  // zoom range: 0.0 (world) to 18.0 (street)
+
+// --- Markers ---
+use terminalmap::marker::{MapMarker, MarkerShape, MarkerAnimation};
+map.add_marker(MapMarker {
+    lat, lon,
+    label: Some("Station Name".into()),
+    color: 82,                          // xterm-256 color (82 = green, 226 = yellow)
+    shape: MarkerShape::Dot,
+    animation: MarkerAnimation::Pulse,
+    id: "unique_id".into(),
+});
+map.clear_markers();                    // call before re-adding to update colors
+map.advance_tick();                     // call once per frame for animations
+
+// --- Nearest station (selection logic) ---
+fn nearest(stations: &[Station], lat: f64, lon: f64) -> Option<usize> {
+    stations.iter().enumerate()
+        .min_by_key(|(_, s)| ((s.lat-lat).powi(2) + (s.lon-lon).powi(2) * 1e6) as i64)
+        .map(|(i, _)| i)
+}
+```
+
+---
+
+## Cargo.toml (copy exactly)
+
+```toml
+[package]
+name = "radioterm"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+terminalmap = { path = "TerminalMap" }
+ratatui     = "0.29"
+crossterm   = "0.28"
+tokio       = { version = "1", features = ["full"] }
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+anyhow      = "1"
+```
+
+> **Note:** `crossterm` and `ratatui` versions must match what TerminalMap uses.
+> Check `TerminalMap/Cargo.toml` if you get version conflict errors.
+
+---
+
+## Phases
+
+---
+
+### ✅ PHASE 0 — Repo
+**Status: DONE** — git repo exists at project root.
 
 ---
 
 ### 🔲 PHASE 1 — Cargo Setup
 
-**Goal:** A `cargo run` that compiles a blank terminal app and exits cleanly.
+**Goal:** `cargo build` succeeds with a minimal main.
 
-**Tasks:**
-1. Create `Cargo.toml` with these dependencies:
-   ```toml
-   [package]
-   name = "radioterm"
-   version = "0.1.0"
-   edition = "2021"
-
-   [dependencies]
-   terminalmap = { git = "https://github.com/psmux/TerminalMap" }
-   ratatui = "0.29"
-   crossterm = "0.28"
-   tokio = { version = "1", features = ["full"] }
-   serde = { version = "1", features = ["derive"] }
-   serde_json = "1"
-   anyhow = "1"
+1. Create `Cargo.toml` using the template above.
+2. Create `src/main.rs`:
+   ```rust
+   #[tokio::main]
+   async fn main() {
+       println!("RadioTerm starting...");
+   }
    ```
-2. Create `src/main.rs` with a bare `#[tokio::main] async fn main() { println!("ok"); }`.
-3. Run `cargo build`. Fix compile errors only — do not add features yet.
+3. Run `cargo build`. Fix errors only — no features yet.
 
-**Done when:** `cargo build` succeeds with no errors.
+**Done when:** `cargo build` exits with code 0, no errors.
 
 ---
 
-### 🔲 PHASE 2 — Station Data
+### 🔲 PHASE 2 — Stations
 
-**Goal:** Load and parse a list of stations from a bundled JSON file.
+**Goal:** Load and parse station data from a bundled JSON file.
 
-**Tasks:**
-1. Create `stations.json` in project root with this exact structure (start with 5 real stations only):
+1. Create `stations.json` in project root:
    ```json
    [
      {"id":"bbc1","name":"BBC Radio 1","lat":51.5,"lon":-0.1,"stream_url":"http://stream.live.vc.bbcmedia.co.uk/bbc_radio_one"},
      {"id":"kexp","name":"KEXP 90.3","lat":47.6,"lon":-122.3,"stream_url":"https://kexp-mp3-128.streamguys1.com/kexp128.mp3"},
      {"id":"fip","name":"FIP Radio","lat":48.8,"lon":2.3,"stream_url":"https://icecast.radiofrance.fr/fip-midfi.mp3"},
-     {"id":"nprdfw","name":"NPR KERA","lat":32.7,"lon":-96.8,"stream_url":"https://nprdfw.streamguys1.com/nprdfw.mp3"},
+     {"id":"kera","name":"NPR KERA","lat":32.7,"lon":-96.8,"stream_url":"https://nprdfw.streamguys1.com/nprdfw.mp3"},
      {"id":"abc","name":"ABC Radio National","lat":-33.8,"lon":151.2,"stream_url":"https://live-radio01.mediahubaustralia.com/2RNW/mp3/"}
    ]
    ```
@@ -97,233 +143,271 @@ radio/
    }
 
    pub fn load() -> anyhow::Result<Vec<Station>> {
-       let data = include_str!("../stations.json");
-       Ok(serde_json::from_str(data)?)
+       let raw = include_str!("../stations.json");
+       Ok(serde_json::from_str(raw)?)
    }
    ```
-3. In `main.rs`, call `stations::load()` and print the count: `println!("{} stations loaded", stations.len())`.
+3. In `main.rs`: declare `mod stations;`, call `stations::load()`, print count.
 
 **Done when:** `cargo run` prints `5 stations loaded`.
 
 ---
 
-### 🔲 PHASE 3 — Player Module
+### 🔲 PHASE 3 — Player
 
-**Goal:** Play and stop audio streams via `mpv` child process.
+**Goal:** Play and stop an audio stream using `mpv` as a child process.
 
-**Tasks:**
 1. Create `src/player.rs`:
    ```rust
    use std::process::{Child, Command, Stdio};
 
-   pub struct Player {
-       child: Option<Child>,
-   }
+   pub struct Player { child: Option<Child> }
 
    impl Player {
        pub fn new() -> Self { Self { child: None } }
 
        pub fn play(&mut self, url: &str) {
            self.stop();
-           let child = Command::new("mpv")
+           self.child = Command::new("mpv")
                .args(["--no-video", "--really-quiet", url])
-               .stdin(Stdio::null())
-               .stdout(Stdio::null())
-               .stderr(Stdio::null())
-               .spawn();
-           self.child = child.ok();
+               .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
+               .spawn().ok();
        }
 
        pub fn stop(&mut self) {
-           if let Some(mut c) = self.child.take() {
-               let _ = c.kill();
-           }
+           if let Some(mut c) = self.child.take() { let _ = c.kill(); }
        }
 
-       pub fn is_playing(&self) -> bool {
-           self.child.is_some()
-       }
+       pub fn is_playing(&self) -> bool { self.child.is_some() }
    }
 
-   impl Drop for Player {
-       fn drop(&mut self) { self.stop(); }
-   }
+   impl Drop for Player { fn drop(&mut self) { self.stop(); } }
    ```
-2. In `main.rs`, construct a `Player`, call `player.play("https://kexp-mp3-128.streamguys1.com/kexp128.mp3")`, sleep 5 seconds, call `player.stop()`.
+2. In `main.rs`, test: create Player, call `play(kexp_url)`, `std::thread::sleep(5s)`, `stop()`.
 
-**Done when:** Running `cargo run` plays 5 seconds of audio and exits cleanly. Verify with speakers on.
+**Done when:** `cargo run` plays 5 seconds of audio, exits cleanly.
 
 ---
 
 ### 🔲 PHASE 4 — TUI Shell + Map
 
-**Goal:** Full-screen terminal with the map rendered. `q` quits. Map pans with arrow keys.
+**Goal:** Full-screen terminal with a scrollable, zoomable map. `q` quits cleanly.
 
-**Tasks:**
-1. Set up terminal raw mode + alternate screen in `main.rs` using crossterm. Always restore terminal on exit via a cleanup guard or RAII wrapper.
-2. Initialize `MapState` from terminalmap:
+1. In `main.rs`, set up raw mode + alternate screen:
    ```rust
-   use terminalmap::{widget::MapState, config::MapConfig};
-   let mut map = MapState::new(MapConfig::default()).await?;
-   map.set_size(terminal_width, terminal_height);
+   use crossterm::{terminal, execute};
+   terminal::enable_raw_mode()?;
+   execute!(std::io::stdout(), terminal::EnterAlternateScreen)?;
+   // On exit (before returning from main):
+   terminal::disable_raw_mode()?;
+   execute!(std::io::stdout(), terminal::LeaveAlternateScreen)?;
    ```
-3. Event loop: read crossterm events with `event::poll(Duration::from_millis(50))`.
-   - Arrow keys / WASD → call `map.pan(...)` or update `center_lat/center_lon` directly.
-   - `+` / `-` → `map.zoom_in()` / `map.zoom_out()`.
-   - `q` → break loop, restore terminal.
-4. Render loop: call `map.render().await?` and write the result string to stdout with crossterm.
+2. Get terminal size:
+   ```rust
+   let (w, h) = terminal::size()?;  // returns (cols, rows) as u16
+   ```
+3. Create map, set size, enter event loop:
+   ```rust
+   let mut map = MapState::new(MapConfig::default()).await?;
+   map.set_size(w as usize, h as usize - 1); // -1 for status bar row
+   ```
+4. Event loop (use `event::poll` — never spin without timeout):
+   ```rust
+   use crossterm::event::{self, Event, KeyCode};
+   loop {
+       if event::poll(std::time::Duration::from_millis(50))? {
+           if let Event::Key(k) = event::read()? {
+               match k.code {
+                   KeyCode::Char('q') => break,
+                   KeyCode::Up    | KeyCode::Char('w') => map.center_lat += 1.0,
+                   KeyCode::Down  | KeyCode::Char('s') => map.center_lat -= 1.0,
+                   KeyCode::Left  | KeyCode::Char('a') => map.center_lon -= 2.0,
+                   KeyCode::Right | KeyCode::Char('d') => map.center_lon += 2.0,
+                   KeyCode::Char('+') => map.zoom = (map.zoom + 0.5).min(18.0),
+                   KeyCode::Char('-') => map.zoom = (map.zoom - 0.5).max(0.0),
+                   _ => {}
+               }
+           }
+       }
+       // Render
+       let frame = map.render().await?;
+       print!("\x1B[H{}", frame);  // move cursor to top-left, then print
+       use std::io::Write;
+       std::io::stdout().flush()?;
+   }
+   ```
 
-**Do not add stations or player in this phase.**
+**Do NOT add stations or player yet.**
 
-**Done when:** Map fills the terminal, pans smoothly, zooms, and `q` exits without leaving the terminal broken.
+**Done when:** Map fills terminal, pans and zooms with keys, `q` exits without corrupting the terminal.
 
 ---
 
-### 🔲 PHASE 5 — Station Markers on Map
+### 🔲 PHASE 5 — Markers
 
-**Goal:** Every station from `stations.json` is rendered as a pulsing dot on the map.
+**Goal:** Each station renders as a pulsing green dot on the correct geographic position.
 
-**Tasks:**
-1. After loading stations, iterate and call `map.add_marker(...)` for each:
+1. After creating the map and loading stations, add markers:
    ```rust
-   use terminalmap::marker::{MapMarker, MarkerShape, MarkerAnimation};
    for s in &stations {
        map.add_marker(MapMarker {
-           lat: s.lat,
-           lon: s.lon,
+           lat: s.lat, lon: s.lon,
            label: Some(s.name.clone()),
-           color: 82,           // bright green
+           color: 82,
            shape: MarkerShape::Dot,
            animation: MarkerAnimation::Pulse,
            id: s.id.clone(),
        });
    }
    ```
-2. Call `map.advance_tick()` once per render frame so animations work.
+2. Inside the render loop, call `map.advance_tick()` before `map.render()`.
 
-**Done when:** You can see all 5 station dots pulsing on the correct geographic positions on the map.
+**Done when:** All 5 station dots appear pulsing on the map at the right positions.
 
 ---
 
-### 🔲 PHASE 6 — Crosshair & Station Selection
+### 🔲 PHASE 6 — Crosshair + Selection
 
-**Goal:** A center crosshair `⌖` drawn over the map. The nearest station to the map center is highlighted in yellow.
+**Goal:** A `⌖` crosshair drawn at screen center. The nearest station is highlighted yellow. Status bar shows station name.
 
-**Tasks:**
-1. Create `src/app.rs` with `App` struct:
+1. Create `src/app.rs`:
    ```rust
    pub struct App {
-       pub selected_station_idx: Option<usize>,
-       pub is_playing: bool,
-       pub status_msg: String,
+       pub selected: Option<usize>,
+       pub status: String,
+   }
+   impl App {
+       pub fn new() -> Self { Self { selected: None, status: "Pan to select a station".into() } }
    }
    ```
-2. After each map pan, compute the nearest station:
+2. After each pan/key event, recompute nearest station using the `nearest()` function from Key APIs above. Store index in `app.selected`.
+3. Re-sync markers each frame:
    ```rust
-   fn nearest_station(stations: &[Station], lat: f64, lon: f64) -> Option<usize> {
-       stations.iter().enumerate()
-           .min_by_key(|(_, s)| {
-               let d = (s.lat - lat).powi(2) + (s.lon - lon).powi(2);
-               (d * 1e6) as i64
-           })
-           .map(|(i, _)| i)
+   map.clear_markers();
+   for (i, s) in stations.iter().enumerate() {
+       let color = if app.selected == Some(i) { 226 } else { 82 }; // yellow vs green
+       map.add_marker(MapMarker { lat: s.lat, lon: s.lon, color,
+           label: Some(s.name.clone()), shape: MarkerShape::Dot,
+           animation: MarkerAnimation::Pulse, id: s.id.clone() });
    }
    ```
-3. Re-color the selected marker to yellow (`226`) and all others to green (`82`) by clearing markers and re-adding them each frame.
-4. Draw crosshair: after writing map output, write `⌖` at terminal center using crossterm cursor positioning.
-5. Draw a status bar at the bottom row: `[station name] | Enter: Play | q: Quit`.
+4. Draw crosshair at screen center after rendering map:
+   ```rust
+   use crossterm::cursor::MoveTo;
+   execute!(stdout, MoveTo(w/2, h/2 - 1))?;
+   print!("⌖");
+   ```
+5. Draw status bar on last row:
+   ```rust
+   execute!(stdout, MoveTo(0, h - 1))?;
+   print!("{:<width$}", app.status, width = w as usize);
+   ```
+6. Update `app.status` with selected station name after each selection change.
 
-**Done when:** Panning highlights the nearest station, and the status bar updates with the correct station name.
-
----
-
-### 🔲 PHASE 7 — Play on Enter
-
-**Goal:** Pressing `Enter` plays the selected station. `Space` stops. Status bar reflects state.
-
-**Tasks:**
-1. On `Enter` key event: call `player.play(&stations[selected_idx].stream_url)` and set `app.status_msg = format!("▶ Playing: {}", station.name)`.
-2. On `Space` key event: call `player.stop()` and set `app.status_msg = "⏹ Stopped"`.
-3. If no station is selected, show `app.status_msg = "Pan map to select a station"`.
-
-**Done when:** You can pan the map, land near BBC Radio 1, press Enter, and hear audio. Press Space to stop.
+**Done when:** Panning updates the yellow highlight and status bar correctly.
 
 ---
 
-### 🔲 PHASE 8 — Expand Station List
+### 🔲 PHASE 7 — Playback
 
-**Goal:** Replace the 5-station `stations.json` with a real global list (~500 stations).
+**Goal:** `Enter` plays selected station. `Space` stops. Status bar reflects state.
 
-**Tasks:**
-1. Fetch stations from the Radio Browser API. Run this one-time script to download:
+1. In event loop, add key handlers:
+   ```rust
+   KeyCode::Enter => {
+       if let Some(i) = app.selected {
+           player.play(&stations[i].stream_url);
+           app.status = format!("▶  {} | Space: stop | q: quit", stations[i].name);
+       }
+   }
+   KeyCode::Char(' ') => {
+       player.stop();
+       app.status = "⏹  Stopped | Enter: play | q: quit".into();
+   }
+   ```
+2. Wire up `player` (created in Phase 3) into the main loop.
+
+**Done when:** Pan to BBC Radio 1 → Enter → hear audio. Space → silence.
+
+---
+
+### 🔲 PHASE 8 — Expand Stations
+
+**Goal:** Replace 5 test stations with ~500 real global stations from Radio Browser API.
+
+1. Run this one-time script from the project root:
    ```bash
    curl -s "https://de1.api.radio-browser.info/json/stations/search?limit=500&has_geo_info=true&order=clickcount&reverse=true" \
-     | python3 -c "
+   | python3 -c "
    import json,sys
    data=json.load(sys.stdin)
-   out=[{'id':s['stationuuid'],'name':s['name'],'lat':float(s['geo_lat']),'lon':float(s['geo_long']),'stream_url':s['url_resolved']} for s in data if s.get('geo_lat') and s.get('geo_long') and s.get('url_resolved')]
+   out=[{'id':s['stationuuid'],'name':s['name'],
+         'lat':float(s['geo_lat']),'lon':float(s['geo_long']),
+         'stream_url':s['url_resolved']}
+        for s in data if s.get('geo_lat') and s.get('geo_long') and s.get('url_resolved')]
    print(json.dumps(out,indent=2))
    " > stations.json
    ```
-2. Verify `stations.json` has ~400–500 entries with valid lat/lon.
-3. Run `cargo run`. Map should display all stations. Verify performance is smooth.
+2. Run `cargo run`. Verify ~400–500 dots on the map. Verify smooth performance.
 
-**Done when:** ~500 stations render on the map without lag.
-
----
-
-### 🔲 PHASE 9 — Polish & Ship
-
-**Goal:** The app is pleasant to use and handles edge cases.
-
-**Tasks (in order of importance):**
-1. **Terminal resize:** On resize event, call `map.set_size(new_w, new_h)` and re-render.
-2. **Graceful mpv missing:** If `mpv` binary is not found, show error in status bar: `mpv not found — install mpv to play audio`.
-3. **Clean exit on panic:** Wrap main with a catch to always restore terminal mode even on crash (use `std::panic::set_hook`).
-4. **README update:** Write a short `README.md` with install steps: `cargo install --path .`, then just run `radioterm`.
-
-**Done when:** App handles resize, shows a friendly error if mpv missing, and README is updated.
+**Done when:** ~500 stations render without visible lag.
 
 ---
 
-## Rescue Rules (Read when STUCK)
+### 🔲 PHASE 9 — Polish
 
-> **Rule 1 — One error at a time.**
-> Fix the first compiler error only. Run `cargo check 2>&1 | head -30`. Fix it. Repeat. Never try to fix multiple errors simultaneously.
+**Tasks (in priority order):**
+1. **Resize:** On `Event::Resize(w, h)`, call `map.set_size(w as usize, h as usize - 1)`.
+2. **mpv missing:** Wrap `player.play()` — if `Command::new("mpv").spawn()` fails, set `app.status = "Error: mpv not installed. Run: sudo apt install mpv"`.
+3. **Panic cleanup:** Add at top of main:
+   ```rust
+   let default_hook = std::panic::take_hook();
+   std::panic::set_hook(Box::new(move |info| {
+       let _ = crossterm::terminal::disable_raw_mode();
+       let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen);
+       default_hook(info);
+   }));
+   ```
+4. **Update README.md** with: what the app does, `cargo run` to launch, key controls table.
+5. **git commit** all changes with message `feat: complete radioterm`.
 
-> **Rule 2 — Terminal stuck/broken after crash?**
-> Run `reset` in the shell. That restores terminal state.
-
-> **Rule 3 — mpv not playing audio?**
-> Test in isolation: `mpv --no-video https://kexp-mp3-128.streamguys1.com/kexp128.mp3`. If this fails, the stream URL is dead — swap it with a working one.
-
-> **Rule 4 — Map not rendering / blank screen?**
-> Check `map.set_size(w, h)` is called with actual terminal dimensions before `map.render()`. Use `crossterm::terminal::size()` to get dimensions.
-
-> **Rule 5 — Stuck on a compile error for more than 2 attempts?**
-> Simplify: delete the failing code block, write the simplest possible version that compiles, then add features back one at a time.
-
-> **Rule 6 — Infinite loop / high CPU?**
-> Ensure `event::poll(Duration::from_millis(50))` is used — never spin without a sleep/poll. The event loop must always have a timeout.
-
-> **Rule 7 — Don't refactor while implementing.**
-> Get each phase working first. Only refactor at the end of a phase when all tests pass.
+**Done when:** All 4 tasks above are complete and `cargo run` launches cleanly.
 
 ---
 
-## Quick Reference
+## Rescue Rules
+
+> **Stuck on compile error?**
+> Run `cargo check 2>&1 | head -20`. Fix the FIRST error only. Repeat. Never fix multiple errors at once.
+
+> **Terminal is broken/garbled after a crash?**
+> Run `reset` in shell. This restores terminal state.
+
+> **mpv not playing?**
+> Test directly: `mpv --no-video https://kexp-mp3-128.streamguys1.com/kexp128.mp3`
+> If that fails, stream URL is dead — pick a different one from `stations.json`.
+
+> **Map is blank / not rendering?**
+> Ensure `map.set_size(w, h)` is called with real terminal dimensions before `map.render()`.
+> Check that `\x1B[H` (cursor home) is printed before the frame string.
+
+> **CPU spiking / app freezing?**
+> The event loop MUST use `event::poll(Duration::from_millis(50))`. Never use a bare loop without a timeout.
+
+> **Dependency version conflict?**
+> Open `TerminalMap/Cargo.toml`, check exact versions of `crossterm` and `ratatui`, mirror them in your `Cargo.toml`.
+
+> **Stuck for more than 2 attempts on the same error?**
+> Delete the failing block. Write the simplest thing that compiles. Add features back one line at a time.
+
+---
+
+## Key Controls Reference
 
 | Key | Action |
 |---|---|
-| Arrows / WASD | Pan map |
+| `W` `A` `S` `D` / Arrows | Pan map |
 | `+` / `-` | Zoom in / out |
 | `Enter` | Play selected station |
 | `Space` | Stop playback |
 | `q` | Quit |
-
-| API | URL |
-|---|---|
-| Radio Browser | `https://de1.api.radio-browser.info/json/stations/search?limit=500&has_geo_info=true&order=clickcount&reverse=true` |
-| TerminalMap docs | `/tmp/TerminalMap/README.md` |
-| TerminalMap marker API | `/tmp/TerminalMap/src/marker.rs` |
-| TerminalMap widget API | `/tmp/TerminalMap/src/widget.rs` |
