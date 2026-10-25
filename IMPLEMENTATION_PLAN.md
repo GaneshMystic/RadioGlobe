@@ -97,7 +97,7 @@ anyhow      = "1"
 
 ---
 
-### 🔲 PHASE 1 — Cargo Setup
+### ✅ PHASE 1 — Cargo Setup
 
 **Goal:** `cargo build` succeeds with a minimal main.
 
@@ -115,7 +115,7 @@ anyhow      = "1"
 
 ---
 
-### 🔲 PHASE 2 — Stations
+### ✅ PHASE 2 — Stations
 
 **Goal:** Load and parse station data from a bundled JSON file.
 
