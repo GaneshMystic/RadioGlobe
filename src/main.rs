@@ -69,7 +69,8 @@ async fn main() -> anyhow::Result<()> {
 
     let (mut cols, mut rows) = terminal::size()?;
     let mut map = MapState::new(MapConfig::default()).await?;
-    map.set_size(cols as usize, rows.saturating_sub(1) as usize);
+    let map_rows = rows.saturating_sub(1);
+    map.set_size((cols as usize) * 2, (map_rows as usize) * 4);
 
     // Initial station selection and marker setup
     app.selected = nearest(&stations, map.center_lat, map.center_lon);
@@ -175,7 +176,8 @@ async fn main() -> anyhow::Result<()> {
                 Event::Resize(w, h) => {
                     cols = w;
                     rows = h;
-                    map.set_size(cols as usize, rows.saturating_sub(1) as usize);
+                    let map_rows = rows.saturating_sub(1);
+                    map.set_size((cols as usize) * 2, (map_rows as usize) * 4);
                 }
                 _ => {}
             }
