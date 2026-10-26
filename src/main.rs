@@ -36,7 +36,6 @@ fn nearest(stations: &[Station], lat: f64, lon: f64) -> Option<usize> {
 // ── Marker sync ───────────────────────────────────────────────────────────────
 
 fn sync_markers(map: &mut MapState, _stations: &[Station], _selected_idx: Option<usize>, _app: &App) {
-    // Clean map: no cluttering green/yellow station markers, crosshairs handle selection.
     map.clear_markers();
 }
 
@@ -116,155 +115,143 @@ async fn main() -> anyhow::Result<()> {
     sync_markers(&mut map, &stations, app.selected, &app);
 
     let mut needs_redraw = true;
+    let mut running = true;
 
-    loop {
-        let event_occurred = event::poll(Duration::from_millis(30))?;
-        
-        if event_occurred {
-            match event::read()? {
-                Event::Key(k) if k.kind == KeyEventKind::Press => {
-                    needs_redraw = true;
-                    match k.code {
-                        KeyCode::Char('q') => break,
-
-                        // Toggle shortcuts bar with Tab
-                        KeyCode::Tab => {
-                            app.toggle_shortcuts();
-                        }
-
-                        // Pan: h (Left)
-                        KeyCode::Left | KeyCode::Char('a') | KeyCode::Char('h') => {
-                            app.flash_key('h');
-                            let step = pan_step(map.zoom);
-                            pan(&mut map, &mut app, &stations, 0.0, -step * 2.0);
-                        }
-                        // Pan: j (Down)
-                        KeyCode::Down | KeyCode::Char('s') | KeyCode::Char('j') => {
-                            app.flash_key('j');
-                            let step = pan_step(map.zoom);
-                            pan(&mut map, &mut app, &stations, -step, 0.0);
-                        }
-                        // Pan: k (Up)
-                        KeyCode::Up | KeyCode::Char('w') | KeyCode::Char('k') => {
-                            app.flash_key('k');
-                            let step = pan_step(map.zoom);
-                            pan(&mut map, &mut app, &stations, step, 0.0);
-                        }
-                        // Pan: l (Right)
-                        KeyCode::Right | KeyCode::Char('d') | KeyCode::Char('l') => {
-                            app.flash_key('l');
-                            let step = pan_step(map.zoom);
-                            pan(&mut map, &mut app, &stations, 0.0, step * 2.0);
-                        }
-
-                        // Zoom In: i
-                        KeyCode::Char('+') | KeyCode::Char('=') | KeyCode::Char('i') => {
-                            app.flash_key('i');
-                            map.zoom_by(0.5);
-                        }
-                        // Zoom Out: o
-                        KeyCode::Char('-') | KeyCode::Char('o') => {
-                            app.flash_key('o');
-                            map.zoom_by(-0.5);
-                        }
-
-                        // Station navigation (n / p)
-                        KeyCode::Char('n') => {
-                            app.flash_key('n');
-                            if let Some(idx) = app.selected {
-                                let next = (idx + 1) % stations.len();
-                                jump_to(&mut map, &mut app, &stations, next, &mut player);
+    while running {
+        // Drain all pending events in the queue to batch key repeats and prevent stuttering
+        if event::poll(Duration::from_millis(16))? {
+            while event::poll(Duration::from_millis(0))? {
+                match event::read()? {
+                    Event::Key(k) if k.kind == KeyEventKind::Press => {
+                        needs_redraw = true;
+                        match k.code {
+                            KeyCode::Char('q') => {
+                                running = false;
+                                break;
                             }
-                        }
-                        KeyCode::Char('p') => {
-                            app.flash_key('p');
-                            if let Some(idx) = app.selected {
-                                let prev = if idx == 0 { stations.len() - 1 } else { idx - 1 };
-                                jump_to(&mut map, &mut app, &stations, prev, &mut player);
+
+                            // Toggle shortcuts bar with Tab
+                            KeyCode::Tab => {
+                                app.toggle_shortcuts();
                             }
-                        }
 
-                        // Toggle Favorite (f)
-                        KeyCode::Char('f') => {
-                            app.flash_key('f');
-                            if let Some(idx) = app.selected {
-                                let s = &stations[idx];
-                                app.toggle_favorite(&s.id, &s.name, &s.city);
-                                sync_markers(&mut map, &stations, app.selected, &app);
+                            // Pan: h (Left)
+                            KeyCode::Left | KeyCode::Char('a') | KeyCode::Char('h') => {
+                                app.flash_key('h');
+                                let step = pan_step(map.zoom);
+                                pan(&mut map, &mut app, &stations, 0.0, -step * 2.0);
                             }
-                        }
+                            // Pan: j (Down)
+                            KeyCode::Down | KeyCode::Char('s') | KeyCode::Char('j') => {
+                                app.flash_key('j');
+                                let step = pan_step(map.zoom);
+                                pan(&mut map, &mut app, &stations, -step, 0.0);
+                            }
+                            // Pan: k (Up)
+                            KeyCode::Up | KeyCode::Char('w') | KeyCode::Char('k') => {
+                                app.flash_key('k');
+                                let step = pan_step(map.zoom);
+                                pan(&mut map, &mut app, &stations, step, 0.0);
+                            }
+                            // Pan: l (Right)
+                            KeyCode::Right | KeyCode::Char('d') | KeyCode::Char('l') => {
+                                app.flash_key('l');
+                                let step = pan_step(map.zoom);
+                                pan(&mut map, &mut app, &stations, 0.0, step * 2.0);
+                            }
 
-                        // Enter: Play
-                        KeyCode::Enter => {
-                            app.flash_key('E');
-                            if let Some(i) = app.selected {
-                                let s = &stations[i];
-                                app.update_status_buffering(&s.name, &s.city);
-                                
-                                let frame = map.render().await?;
-                                print!("\x1B[H{}", frame);
-                                let reserved = if app.show_shortcuts && rows >= 4 && cols >= 60 { 4 } else if app.show_shortcuts && rows >= 3 { 3 } else { 2 };
-                                let map_rows = rows.saturating_sub(reserved);
-                                execute!(stdout, MoveTo(cols / 2, map_rows / 2))?;
-                                print!("\x1B[1;33m⌖\x1B[0m");
-                                ui::render_bottom_ui(&app, &stations, map.zoom, cols, rows)?;
-                                stdout.flush()?;
+                            // Zoom In: i
+                            KeyCode::Char('+') | KeyCode::Char('=') | KeyCode::Char('i') => {
+                                app.flash_key('i');
+                                map.zoom_by(0.5);
+                            }
+                            // Zoom Out: o
+                            KeyCode::Char('-') | KeyCode::Char('o') => {
+                                app.flash_key('o');
+                                map.zoom_by(-0.5);
+                            }
 
-                                if player.play(&s.stream_url) {
-                                    app.playing_idx = Some(i);
-                                    app.update_status_playing(&s.id, &s.name, &s.city);
-                                } else {
-                                    app.station_info = "Error: mpv not installed. Run: sudo apt install mpv".into();
+                            // Station navigation (n / p)
+                            KeyCode::Char('n') => {
+                                app.flash_key('n');
+                                if let Some(idx) = app.selected {
+                                    let next = (idx + 1) % stations.len();
+                                    jump_to(&mut map, &mut app, &stations, next, &mut player);
                                 }
                             }
-                        }
+                            KeyCode::Char('p') => {
+                                app.flash_key('p');
+                                if let Some(idx) = app.selected {
+                                    let prev = if idx == 0 { stations.len() - 1 } else { idx - 1 };
+                                    jump_to(&mut map, &mut app, &stations, prev, &mut player);
+                                }
+                            }
 
-                        // Space: Toggle Play / Pause
-                        KeyCode::Char(' ') => {
-                            app.flash_key(' ');
-                            if player.is_playing() {
-                                player.stop();
-                                app.playing_idx = None;
+                            // Toggle Favorite (f)
+                            KeyCode::Char('f') => {
+                                app.flash_key('f');
+                                if let Some(idx) = app.selected {
+                                    let s = &stations[idx];
+                                    app.toggle_favorite(&s.id, &s.name, &s.city);
+                                    sync_markers(&mut map, &stations, app.selected, &app);
+                                }
+                            }
+
+                            // Enter or Space: Play / Pause
+                            KeyCode::Enter | KeyCode::Char(' ') => {
+                                let is_space = k.code == KeyCode::Char(' ');
+                                if is_space {
+                                    app.flash_key(' ');
+                                    if player.is_playing() {
+                                        player.stop();
+                                        app.playing_idx = None;
+                                        if let Some(i) = app.selected {
+                                            let s = &stations[i];
+                                            app.update_status_stopped(&s.id, &s.name, &s.city);
+                                        }
+                                        continue;
+                                    }
+                                } else {
+                                    app.flash_key('E');
+                                }
+
                                 if let Some(i) = app.selected {
                                     let s = &stations[i];
-                                    app.update_status_stopped(&s.id, &s.name, &s.city);
-                                }
-                            } else if let Some(i) = app.selected {
-                                let s = &stations[i];
-                                app.update_status_buffering(&s.name, &s.city);
-                                
-                                let frame = map.render().await?;
-                                print!("\x1B[H{}", frame);
-                                let reserved = if app.show_shortcuts && rows >= 4 && cols >= 60 { 4 } else if app.show_shortcuts && rows >= 3 { 3 } else { 2 };
-                                let map_rows = rows.saturating_sub(reserved);
-                                execute!(stdout, MoveTo(cols / 2, map_rows / 2))?;
-                                print!("\x1B[1;33m⌖\x1B[0m");
-                                ui::render_bottom_ui(&app, &stations, map.zoom, cols, rows)?;
-                                stdout.flush()?;
+                                    app.update_status_buffering(&s.name, &s.city);
+                                    
+                                    let frame = map.render().await?;
+                                    print!("\x1B[H{}", frame);
+                                    let reserved = if app.show_shortcuts && rows >= 4 && cols >= 60 { 4 } else if app.show_shortcuts && rows >= 3 { 3 } else { 2 };
+                                    let map_rows = rows.saturating_sub(reserved);
+                                    if map_rows > 0 {
+                                        execute!(stdout, MoveTo(cols / 2, map_rows / 2))?;
+                                        print!("\x1B[1;33m⌖\x1B[0m");
+                                    }
+                                    ui::render_bottom_ui(&app, &stations, map.zoom, cols, rows)?;
+                                    stdout.flush()?;
 
-                                if player.play(&s.stream_url) {
-                                    app.playing_idx = Some(i);
-                                    app.update_status_playing(&s.id, &s.name, &s.city);
-                                } else {
-                                    app.station_info = "Error: mpv not installed. Run: sudo apt install mpv".into();
+                                    if player.play(&s.stream_url) {
+                                        app.playing_idx = Some(i);
+                                        app.update_status_playing(&s.id, &s.name, &s.city);
+                                    } else {
+                                        app.station_info = "Error: mpv not installed. Run: sudo apt install mpv".into();
+                                    }
                                 }
                             }
-                        }
 
-                        _ => {
-                            needs_redraw = false;
+                            _ => {}
                         }
                     }
-                }
 
-                Event::Resize(w, h) => {
-                    cols = w;
-                    rows = h;
-                    map.set_size_from_terminal(cols, rows);
-                    needs_redraw = true;
-                }
+                    Event::Resize(w, h) => {
+                        cols = w;
+                        rows = h;
+                        map.set_size_from_terminal(cols, rows);
+                        needs_redraw = true;
+                    }
 
-                _ => {}
+                    _ => {}
+                }
             }
         }
 

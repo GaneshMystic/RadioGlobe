@@ -5,7 +5,7 @@ use crossterm::{cursor::MoveTo, execute};
 pub fn render_bottom_ui(
     app: &App,
     stations: &[Station],
-    _zoom: f64,
+    zoom: f64,
     cols: u16,
     rows: u16,
 ) -> anyhow::Result<()> {
@@ -137,10 +137,12 @@ pub fn render_bottom_ui(
 
         execute!(stdout, MoveTo(0, ctrl_row))?;
         print!("\x1B[2K");
+        
+        let zoom_pct = (((zoom / 18.0) * 100.0).clamp(1.0, 100.0)) as i32;
         let ctrl_str = if max_len >= 40 {
-            format!(" {fav_col}󰋑{r} │ {play_col}󰒮  󰐊  󰒭{r} │ +  90%  - │ {pan_col}   {r}")
+            format!(" {fav_col}󰋑{r} │ {play_col}󰒮  󰐊  󰒭{r} │ +  {}%  - │ {pan_col}   {r}", zoom_pct)
         } else if max_len >= 28 {
-            format!(" {fav_col}󰋑{r} │ {play_col}󰒮  󰐊  󰒭{r} │ + 90% -")
+            format!(" {fav_col}󰋑{r} │ {play_col}󰒮  󰐊  󰒭{r} │ + {}% -", zoom_pct)
         } else {
             format!(" {play_col}󰒮     󰐊     󰒭{r}")
         };
