@@ -203,7 +203,7 @@ async fn main() -> anyhow::Result<()> {
                                 
                                 let frame = map.render().await?;
                                 print!("\x1B[H{}", frame);
-                                let reserved = if app.show_shortcuts && rows >= 12 { 4 } else { 2 };
+                                let reserved = if app.show_shortcuts && rows >= 4 && cols >= 60 { 4 } else if app.show_shortcuts && rows >= 3 { 3 } else { 2 };
                                 let map_rows = rows.saturating_sub(reserved);
                                 execute!(stdout, MoveTo(cols / 2, map_rows / 2))?;
                                 print!("\x1B[1;33m⌖\x1B[0m");
@@ -235,7 +235,7 @@ async fn main() -> anyhow::Result<()> {
                                 
                                 let frame = map.render().await?;
                                 print!("\x1B[H{}", frame);
-                                let reserved = if app.show_shortcuts && rows >= 12 { 4 } else { 2 };
+                                let reserved = if app.show_shortcuts && rows >= 4 && cols >= 60 { 4 } else if app.show_shortcuts && rows >= 3 { 3 } else { 2 };
                                 let map_rows = rows.saturating_sub(reserved);
                                 execute!(stdout, MoveTo(cols / 2, map_rows / 2))?;
                                 print!("\x1B[1;33m⌖\x1B[0m");
@@ -289,7 +289,7 @@ async fn main() -> anyhow::Result<()> {
             let frame = map.render().await?;
             print!("\x1B[H{}", frame);
 
-            let reserved = if app.show_shortcuts && rows >= 12 { 4 } else { 2 };
+            let reserved = if app.show_shortcuts && rows >= 4 && cols >= 60 { 4 } else if app.show_shortcuts && rows >= 3 { 3 } else { 2 };
             let map_rows = rows.saturating_sub(reserved);
             let center_x = cols / 2;
             let center_y = map_rows / 2;
