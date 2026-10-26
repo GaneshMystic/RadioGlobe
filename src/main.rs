@@ -28,7 +28,6 @@ fn nearest(stations: &[Station], lat: f64, lon: f64) -> Option<usize> {
         .min_by_key(|(_, s)| {
             let d_lat = s.lat - lat;
             let d_lon = s.lon - lon;
-            // Simple Euclidean distance² in geo-space (good enough for a UI)
             ((d_lat * d_lat + d_lon * d_lon) * 1_000_000.0) as i64
         })
         .map(|(i, _)| i)
@@ -36,20 +35,18 @@ fn nearest(stations: &[Station], lat: f64, lon: f64) -> Option<usize> {
 
 // ── Marker sync ───────────────────────────────────────────────────────────────
 
-/// Rebuild all markers: dots only (no label text on the map), no animation.
-/// Selected station gets yellow; all others are green.
 fn sync_markers(map: &mut MapState, stations: &[Station], selected_idx: Option<usize>) {
     map.clear_markers();
     for (i, s) in stations.iter().enumerate() {
         let is_selected = selected_idx == Some(i);
-        let color = if is_selected { 226 } else { 82 }; // yellow vs green
+        let color = if is_selected { 226 } else { 82 };
         map.add_marker(MapMarker {
             lat: s.lat,
             lon: s.lon,
-            label: None,                     // ← no text on the map
+            label: None,
             color,
             shape: MarkerShape::Dot,
-            animation: MarkerAnimation::None, // ← no animations
+            animation: MarkerAnimation::None,
             id: s.id.clone(),
         });
     }
@@ -66,16 +63,14 @@ fn update_status_idle(app: &mut App, stations: &[Station]) {
 
 // ── Pan helper ────────────────────────────────────────────────────────────────
 
-/// Pan the map, re-select nearest station, refresh status (unless playing).
 fn pan(map: &mut MapState, app: &mut App, stations: &[Station], dlat: f64, dlon: f64) {
     map.center_lat = (map.center_lat + dlat).clamp(-85.0, 85.0);
     map.center_lon += dlon;
-    // Wrap longitude
     if map.center_lon > 180.0 { map.center_lon -= 360.0; }
     if map.center_lon < -180.0 { map.center_lon += 360.0; }
 
     app.selected = nearest(stations, map.center_lat, map.center_lon);
-    if !app.is_playing {
+    if !app.is_playing && !app.is_buffering {
         update_status_idle(app, stations);
     }
     sync_markers(map, stations, app.selected);
@@ -83,13 +78,20 @@ fn pan(map: &mut MapState, app: &mut App, stations: &[Station], dlat: f64, dlon:
 
 // ── Jump-to-station helper ────────────────────────────────────────────────────
 
-/// Recenter the map on a station and make it selected.
-fn jump_to(map: &mut MapState, app: &mut App, stations: &[Station], idx: usize) {
+fn jump_to(map: &mut MapState, app: &mut App, stations: &[Station], idx: usize, player: &mut Player) {
     let s = &stations[idx];
     map.center_lat = s.lat;
     map.center_lon = s.lon;
     app.selected = Some(idx);
-    if !app.is_playing {
+    
+    if app.is_playing || app.is_buffering {
+        app.update_status_buffering(&s.name, &s.city);
+        if player.play(&s.stream_url) {
+            app.update_status_playing(&s.name, &s.city);
+        } else {
+            app.status = "Error: mpv not installed or stream failed".into();
+        }
+    } else {
         update_status_idle(app, stations);
     }
     sync_markers(map, stations, app.selected);
@@ -99,7 +101,6 @@ fn jump_to(map: &mut MapState, app: &mut App, stations: &[Station], idx: usize) 
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Panic hook: always restore terminal state on crash
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = terminal::disable_raw_mode();
@@ -111,7 +112,6 @@ async fn main() -> anyhow::Result<()> {
     let mut app = App::new();
     let mut player = Player::new();
 
-    // ── Terminal init ─────────────────────────────────────────────────────────
     terminal::enable_raw_mode()?;
     let mut stdout = std::io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -119,127 +119,132 @@ async fn main() -> anyhow::Result<()> {
     let (mut cols, mut rows) = terminal::size()?;
 
     let mut map = MapState::new(MapConfig::default()).await?;
-    // Use the library's helper — it correctly converts cols/rows to braille pixels
-    // and reserves rows for the status bar.
     map.set_size_from_terminal(cols, rows);
-    map.fit_world(); // start with the whole world visible
+    map.fit_world();
 
-    // Initial nearest-station selection
     app.selected = nearest(&stations, map.center_lat, map.center_lon);
     update_status_idle(&mut app, &stations);
     sync_markers(&mut map, &stations, app.selected);
 
-    // ── Event loop ────────────────────────────────────────────────────────────
+    let mut needs_redraw = true;
+
     loop {
-        if event::poll(Duration::from_millis(50))? {
+        // Only poll events with timeout; if no event, we don't redraw unless stream reaps or needs redraw
+        let event_occurred = event::poll(Duration::from_millis(50))?;
+        
+        if event_occurred {
             match event::read()? {
-                Event::Key(k) if k.kind == KeyEventKind::Press => match k.code {
-                    // ── Quit ──────────────────────────────────────────────────
-                    KeyCode::Char('q') => break,
+                Event::Key(k) if k.kind == KeyEventKind::Press => {
+                    needs_redraw = true;
+                    match k.code {
+                        KeyCode::Char('q') => break,
 
-                    // ── Pan (WASD / arrows) ───────────────────────────────────
-                    // Pan step scales with zoom: far out = big jumps, zoomed in = small.
-                    KeyCode::Up | KeyCode::Char('w') => {
-                        let step = pan_step(map.zoom);
-                        pan(&mut map, &mut app, &stations, step, 0.0);
-                    }
-                    KeyCode::Down | KeyCode::Char('s') => {
-                        let step = pan_step(map.zoom);
-                        pan(&mut map, &mut app, &stations, -step, 0.0);
-                    }
-                    KeyCode::Left | KeyCode::Char('a') => {
-                        let step = pan_step(map.zoom);
-                        pan(&mut map, &mut app, &stations, 0.0, -step * 2.0);
-                    }
-                    KeyCode::Right | KeyCode::Char('d') => {
-                        let step = pan_step(map.zoom);
-                        pan(&mut map, &mut app, &stations, 0.0, step * 2.0);
-                    }
-
-                    // ── Zoom ──────────────────────────────────────────────────
-                    KeyCode::Char('+') | KeyCode::Char('=') => {
-                        map.zoom_by(0.5);
-                    }
-                    KeyCode::Char('-') => {
-                        map.zoom_by(-0.5);
-                    }
-
-                    // ── n / p: jump forward / backward through station list ───
-                    KeyCode::Char('n') => {
-                        if let Some(idx) = app.selected {
-                            let next = (idx + 1) % stations.len();
-                            jump_to(&mut map, &mut app, &stations, next);
+                        KeyCode::Up | KeyCode::Char('w') => {
+                            let step = pan_step(map.zoom);
+                            pan(&mut map, &mut app, &stations, step, 0.0);
                         }
-                    }
-                    KeyCode::Char('p') => {
-                        if let Some(idx) = app.selected {
-                            let prev = if idx == 0 { stations.len() - 1 } else { idx - 1 };
-                            jump_to(&mut map, &mut app, &stations, prev);
+                        KeyCode::Down | KeyCode::Char('s') => {
+                            let step = pan_step(map.zoom);
+                            pan(&mut map, &mut app, &stations, -step, 0.0);
                         }
-                    }
+                        KeyCode::Left | KeyCode::Char('a') => {
+                            let step = pan_step(map.zoom);
+                            pan(&mut map, &mut app, &stations, 0.0, -step * 2.0);
+                        }
+                        KeyCode::Right | KeyCode::Char('d') => {
+                            let step = pan_step(map.zoom);
+                            pan(&mut map, &mut app, &stations, 0.0, step * 2.0);
+                        }
 
-                    // ── Enter: play selected station ──────────────────────────
-                    KeyCode::Enter => {
-                        if let Some(i) = app.selected {
-                            if player.play(&stations[i].stream_url) {
-                                app.update_status_playing(&stations[i].name, &stations[i].city);
-                            } else {
-                                app.status =
-                                    "Error: mpv not installed. Run: sudo apt install mpv".into();
+                        KeyCode::Char('+') | KeyCode::Char('=') => {
+                            map.zoom_by(0.5);
+                        }
+                        KeyCode::Char('-') => {
+                            map.zoom_by(-0.5);
+                        }
+
+                        KeyCode::Char('n') => {
+                            if let Some(idx) = app.selected {
+                                let next = (idx + 1) % stations.len();
+                                jump_to(&mut map, &mut app, &stations, next, &mut player);
                             }
                         }
+                        KeyCode::Char('p') => {
+                            if let Some(idx) = app.selected {
+                                let prev = if idx == 0 { stations.len() - 1 } else { idx - 1 };
+                                jump_to(&mut map, &mut app, &stations, prev, &mut player);
+                            }
+                        }
+
+                        KeyCode::Enter => {
+                            if let Some(i) = app.selected {
+                                let s = &stations[i];
+                                app.update_status_buffering(&s.name, &s.city);
+                                
+                                // Render immediately to show buffering state
+                                let frame = map.render().await?;
+                                print!("\x1B[H{}", frame);
+                                let map_rows = rows.saturating_sub(3);
+                                execute!(stdout, MoveTo(cols / 2, map_rows / 2))?;
+                                print!("\x1B[1;33m⌖\x1B[0m");
+                                render_bottom_ui(&app.status, cols, rows);
+                                stdout.flush()?;
+
+                                if player.play(&s.stream_url) {
+                                    app.update_status_playing(&s.name, &s.city);
+                                } else {
+                                    app.status = "Error: mpv not installed. Run: sudo apt install mpv".into();
+                                }
+                            }
+                        }
+
+                        KeyCode::Char(' ') => {
+                            player.stop();
+                            app.update_status_stopped();
+                        }
+
+                        _ => {
+                            needs_redraw = false;
+                        }
                     }
+                }
 
-                    // ── Space: stop ───────────────────────────────────────────
-                    KeyCode::Char(' ') => {
-                        player.stop();
-                        app.update_status_stopped();
-                    }
-
-                    _ => {}
-                },
-
-                // ── Terminal resize ───────────────────────────────────────────
                 Event::Resize(w, h) => {
                     cols = w;
                     rows = h;
                     map.set_size_from_terminal(cols, rows);
+                    needs_redraw = true;
                 }
 
                 _ => {}
             }
         }
 
-        // Check if mpv process has exited on its own (e.g. stream died)
+        // Check if mpv process has exited on its own
         if player.is_playing() && player.try_reap() {
             app.update_status_stopped();
-            app.status = format!("⚠  Stream ended  {}", app.status);
+            app.status = format!("⚠ Stream ended  {}", app.status);
+            needs_redraw = true;
         }
 
-        // ── Render ────────────────────────────────────────────────────────────
-        let frame = map.render().await?;
-        // Move cursor to top-left then print the map frame
-        print!("\x1B[H{}", frame);
+        if needs_redraw {
+            let frame = map.render().await?;
+            print!("\x1B[H{}", frame);
 
-        // Crosshair at screen centre (map area only, above status bar)
-        let map_rows = rows.saturating_sub(1);
-        let center_x = cols / 2;
-        let center_y = map_rows / 2;
-        execute!(stdout, MoveTo(center_x, center_y))?;
-        print!("⌖");
+            let map_rows = rows.saturating_sub(3);
+            let center_x = cols / 2;
+            let center_y = map_rows / 2;
+            if map_rows > 0 {
+                execute!(stdout, MoveTo(center_x, center_y))?;
+                print!("\x1B[1;33m⌖\x1B[0m");
+            }
 
-        // Status bar: last row, two distinct visual sections
-        //   Left: station info (bright)   Right: key hints (dim)
-        let status_row = rows.saturating_sub(1);
-        execute!(stdout, MoveTo(0, status_row))?;
-        // Clear the line first, then write styled status
-        print!("\x1B[2K");
-        render_status_bar(&app.status, cols as usize);
-
-        stdout.flush()?;
+            render_bottom_ui(&app.status, cols, rows);
+            stdout.flush()?;
+            needs_redraw = false;
+        }
     }
 
-    // ── Teardown ──────────────────────────────────────────────────────────────
     player.stop();
     terminal::disable_raw_mode()?;
     execute!(stdout, LeaveAlternateScreen)?;
@@ -247,33 +252,41 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-// ── Pan step: scales with zoom level ─────────────────────────────────────────
-
-/// Returns a pan step (degrees lat) appropriate for the current zoom.
-/// At zoom 0 (world view) → 10°.  At zoom 10 (city level) → ~0.05°.
 fn pan_step(zoom: f64) -> f64 {
-    // Halve the step for each zoom level: step = 10 / 2^zoom
     let step = 10.0 / 2.0_f64.powf(zoom);
     step.clamp(0.02, 15.0)
 }
 
-// ── Status-bar renderer ───────────────────────────────────────────────────────
+fn render_bottom_ui(status: &str, cols: u16, rows: u16) {
+    if rows < 2 {
+        return;
+    }
+    let sep_row = rows.saturating_sub(2);
+    let status_row = rows.saturating_sub(1);
 
-/// Renders the status bar with station info visually differentiated from hints.
-/// Format produced by App::update_status_*:
-///   "▸ <name>  —  <city>  [Enter] play  [n/p] …"
-///   "▶  <name>  —  <city>  [Space] stop  …"
-/// Strategy: bold/bright for the icon+name+city part, dim for the key hints.
-fn render_status_bar(status: &str, _cols: usize) {
-    // Split at the first "  [" to separate station info from key hints
-    if let Some(split_pos) = status.find("  [") {
-        let info = &status[..split_pos];
-        let hints = &status[split_pos..];
-        // Bold + bright white for station info
-        print!("\x1B[1;97m{}\x1B[0m", info);
-        // Dim for key hints
-        print!("\x1B[2m{}\x1B[0m", hints);
+    // 1. Render separator line (subtle dim gray), strictly clamped to `cols` width
+    let _ = execute!(std::io::stdout(), MoveTo(0, sep_row));
+    let sep_len = (cols as usize).min(800);
+    print!("\x1B[2K\x1B[90m{}\x1B[0m", "─".repeat(sep_len));
+
+    // 2. Render status bar with safe truncation/padding to prevent wrapping/warping
+    let _ = execute!(std::io::stdout(), MoveTo(0, status_row));
+    print!("\x1B[2K");
+
+    let max_len = cols as usize;
+    let truncated_status = if status.chars().count() > max_len {
+        let truncated: String = status.chars().take(max_len.saturating_sub(3)).collect();
+        format!("{}...", truncated)
     } else {
-        print!("{}", status);
+        status.to_string()
+    };
+
+    if let Some(split_pos) = truncated_status.find("  |  ") {
+        let info = &truncated_status[..split_pos];
+        let hints = &truncated_status[split_pos..];
+        print!("\x1B[1;36m{}\x1B[0m", info);
+        print!("\x1B[2;37m{}\x1B[0m", hints);
+    } else {
+        print!("\x1B[1;36m{}\x1B[0m", truncated_status);
     }
 }
