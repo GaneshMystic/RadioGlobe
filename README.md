@@ -1,39 +1,49 @@
-# RadioTerm
+# radioterm
 
-An interactive terminal radio exploration map. Explore global radio stations on an interactive world map, tune in to streams directly from your terminal, and discover music worldwide.
+A minimal, lightning-fast terminal radio player and world map explorer inspired by Radio.garden. Powered by `mpv`, Rust, and `terminalmap`.
+
+---
 
 ## Features
 
-- **Interactive World Map**: Pan and zoom smoothly around the globe.
-- **500+ Curated Stations**: Sourced from Radio Browser API with geo-coordinates.
-- **Live Tuning**: Listen to live audio streams using `mpv` under the hood.
-- **Clean Map Markers**: Minimal dot pins showing station positions without cluttering labels or animations.
-- **Fast Station Hopping**: Jump between stations directly using `n` (next) and `p` (prev).
-- **Status Bar Explorer**: Displays station name, region/city, and playback controls.
+- **Interactive World Map**: Explore global radio stations with smooth panning (`hjkl`, WASD, arrows) and zooming (`i`/`o`, `+`/`-`).
+- **Clean Minimalist UI**:
+  - Pinned station info bar at the top of the status block.
+  - Minimalist controls bar with Nerd Font icons and keypress feedback.
+  - Tab-toggleable compact view.
+- **Favorites System**: Bookmark stations with `f` (marked with a red heart `♥`).
+- **Event-Driven Rendering**: Low CPU usage and zero terminal flicker when idle.
+
+---
+
+## Controls
+
+| Key | Action |
+| :--- | :--- |
+| `Space` | Play / Pause |
+| `Enter` | Play Selected Station |
+| `f` | Toggle Favorite |
+| `h j k l` / `WASD` / `Arrows` | Pan Map |
+| `i` / `+` | Zoom In |
+| `o` / `-` | Zoom Out |
+| `n` / `p` | Next / Previous Station |
+| `Tab` | Toggle Full / Compact Controls |
+| `q` | Quit |
+
+---
 
 ## Requirements
 
-- Rust (2021 edition)
-- `mpv` installed for audio playback:
-  ```bash
-  sudo apt install mpv
-  ```
+- **Rust** (Edition 2021+)
+- **`mpv`** audio player backend (`sudo apt install mpv` on Debian/Ubuntu or `brew install mpv` on macOS)
+- A **Nerd Font** installed in your terminal for icons.
 
-## Running
+---
 
-Launch the application:
+## Installation & Running
+
 ```bash
-cargo run
+git clone https://github.com/yourusername/radioterm.git
+cd radioterm
+cargo run --release
 ```
-
-## Key Controls
-
-| Key | Action |
-|---|---|
-| `n` / `p` | Jump to next / previous station |
-| `W` `A` `S` `D` / Arrows | Pan map around the globe |
-| `+` / `-` | Zoom in / out |
-| `Enter` | Play highlighted station |
-| `Space` | Stop audio playback |
-| `q` | Quit application |
-

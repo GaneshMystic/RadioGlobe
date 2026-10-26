@@ -1,6 +1,7 @@
 mod app;
 mod player;
 mod stations;
+mod ui;
 
 use app::App;
 use crossterm::{
@@ -15,11 +16,10 @@ use std::io::Write;
 use std::time::Duration;
 use terminalmap::{
     config::MapConfig,
-    marker::{MapMarker, MarkerAnimation, MarkerShape},
     widget::MapState,
 };
 
-// ── Nearest-station helper ────────────────────────────────────────────────────
+// ── Nearest-station helper ────────────────────────────────────────────────    
 
 fn nearest(stations: &[Station], lat: f64, lon: f64) -> Option<usize> {
     stations
@@ -35,29 +35,17 @@ fn nearest(stations: &[Station], lat: f64, lon: f64) -> Option<usize> {
 
 // ── Marker sync ───────────────────────────────────────────────────────────────
 
-fn sync_markers(map: &mut MapState, stations: &[Station], selected_idx: Option<usize>) {
+fn sync_markers(map: &mut MapState, _stations: &[Station], _selected_idx: Option<usize>, _app: &App) {
+    // Clean map: no cluttering green/yellow station markers, crosshairs handle selection.
     map.clear_markers();
-    for (i, s) in stations.iter().enumerate() {
-        let is_selected = selected_idx == Some(i);
-        let color = if is_selected { 226 } else { 82 };
-        map.add_marker(MapMarker {
-            lat: s.lat,
-            lon: s.lon,
-            label: None,
-            color,
-            shape: MarkerShape::Dot,
-            animation: MarkerAnimation::None,
-            id: s.id.clone(),
-        });
-    }
 }
 
-// ── Status-bar update helper ──────────────────────────────────────────────────
+// ── Status-bar update helper ────────────────────────────────────────────────  
 
 fn update_status_idle(app: &mut App, stations: &[Station]) {
     if let Some(idx) = app.selected {
         let s = &stations[idx];
-        app.update_status_idle(&s.name, &s.city);
+        app.update_status_idle(&s.id, &s.name, &s.city);
     }
 }
 
@@ -73,10 +61,10 @@ fn pan(map: &mut MapState, app: &mut App, stations: &[Station], dlat: f64, dlon:
     if !app.is_playing && !app.is_buffering {
         update_status_idle(app, stations);
     }
-    sync_markers(map, stations, app.selected);
+    sync_markers(map, stations, app.selected, app);
 }
 
-// ── Jump-to-station helper ────────────────────────────────────────────────────
+// ── Jump-to-station helper ────────────────────────────────────────────────    
 
 fn jump_to(map: &mut MapState, app: &mut App, stations: &[Station], idx: usize, player: &mut Player) {
     let s = &stations[idx];
@@ -87,14 +75,15 @@ fn jump_to(map: &mut MapState, app: &mut App, stations: &[Station], idx: usize, 
     if app.is_playing || app.is_buffering {
         app.update_status_buffering(&s.name, &s.city);
         if player.play(&s.stream_url) {
-            app.update_status_playing(&s.name, &s.city);
+            app.playing_idx = Some(idx);
+            app.update_status_playing(&s.id, &s.name, &s.city);
         } else {
-            app.status = "Error: mpv not installed or stream failed".into();
+            app.station_info = "Error: mpv not installed or stream failed".into();
         }
     } else {
         update_status_idle(app, stations);
     }
-    sync_markers(map, stations, app.selected);
+    sync_markers(map, stations, app.selected, app);
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -124,13 +113,12 @@ async fn main() -> anyhow::Result<()> {
 
     app.selected = nearest(&stations, map.center_lat, map.center_lon);
     update_status_idle(&mut app, &stations);
-    sync_markers(&mut map, &stations, app.selected);
+    sync_markers(&mut map, &stations, app.selected, &app);
 
     let mut needs_redraw = true;
 
     loop {
-        // Only poll events with timeout; if no event, we don't redraw unless stream reaps or needs redraw
-        let event_occurred = event::poll(Duration::from_millis(50))?;
+        let event_occurred = event::poll(Duration::from_millis(30))?;
         
         if event_occurred {
             match event::read()? {
@@ -139,68 +127,128 @@ async fn main() -> anyhow::Result<()> {
                     match k.code {
                         KeyCode::Char('q') => break,
 
-                        KeyCode::Up | KeyCode::Char('w') => {
-                            let step = pan_step(map.zoom);
-                            pan(&mut map, &mut app, &stations, step, 0.0);
+                        // Toggle shortcuts bar with Tab
+                        KeyCode::Tab => {
+                            app.toggle_shortcuts();
                         }
-                        KeyCode::Down | KeyCode::Char('s') => {
-                            let step = pan_step(map.zoom);
-                            pan(&mut map, &mut app, &stations, -step, 0.0);
-                        }
-                        KeyCode::Left | KeyCode::Char('a') => {
+
+                        // Pan: h (Left)
+                        KeyCode::Left | KeyCode::Char('a') | KeyCode::Char('h') => {
+                            app.flash_key('h');
                             let step = pan_step(map.zoom);
                             pan(&mut map, &mut app, &stations, 0.0, -step * 2.0);
                         }
-                        KeyCode::Right | KeyCode::Char('d') => {
+                        // Pan: j (Down)
+                        KeyCode::Down | KeyCode::Char('s') | KeyCode::Char('j') => {
+                            app.flash_key('j');
+                            let step = pan_step(map.zoom);
+                            pan(&mut map, &mut app, &stations, -step, 0.0);
+                        }
+                        // Pan: k (Up)
+                        KeyCode::Up | KeyCode::Char('w') | KeyCode::Char('k') => {
+                            app.flash_key('k');
+                            let step = pan_step(map.zoom);
+                            pan(&mut map, &mut app, &stations, step, 0.0);
+                        }
+                        // Pan: l (Right)
+                        KeyCode::Right | KeyCode::Char('d') | KeyCode::Char('l') => {
+                            app.flash_key('l');
                             let step = pan_step(map.zoom);
                             pan(&mut map, &mut app, &stations, 0.0, step * 2.0);
                         }
 
-                        KeyCode::Char('+') | KeyCode::Char('=') => {
+                        // Zoom In: i
+                        KeyCode::Char('+') | KeyCode::Char('=') | KeyCode::Char('i') => {
+                            app.flash_key('i');
                             map.zoom_by(0.5);
                         }
-                        KeyCode::Char('-') => {
+                        // Zoom Out: o
+                        KeyCode::Char('-') | KeyCode::Char('o') => {
+                            app.flash_key('o');
                             map.zoom_by(-0.5);
                         }
 
+                        // Station navigation (n / p)
                         KeyCode::Char('n') => {
+                            app.flash_key('n');
                             if let Some(idx) = app.selected {
                                 let next = (idx + 1) % stations.len();
                                 jump_to(&mut map, &mut app, &stations, next, &mut player);
                             }
                         }
                         KeyCode::Char('p') => {
+                            app.flash_key('p');
                             if let Some(idx) = app.selected {
                                 let prev = if idx == 0 { stations.len() - 1 } else { idx - 1 };
                                 jump_to(&mut map, &mut app, &stations, prev, &mut player);
                             }
                         }
 
+                        // Toggle Favorite (f)
+                        KeyCode::Char('f') => {
+                            app.flash_key('f');
+                            if let Some(idx) = app.selected {
+                                let s = &stations[idx];
+                                app.toggle_favorite(&s.id, &s.name, &s.city);
+                                sync_markers(&mut map, &stations, app.selected, &app);
+                            }
+                        }
+
+                        // Enter: Play
                         KeyCode::Enter => {
+                            app.flash_key('E');
                             if let Some(i) = app.selected {
                                 let s = &stations[i];
                                 app.update_status_buffering(&s.name, &s.city);
                                 
-                                // Render immediately to show buffering state
                                 let frame = map.render().await?;
                                 print!("\x1B[H{}", frame);
-                                let map_rows = rows.saturating_sub(3);
+                                let reserved = if app.show_shortcuts && rows >= 12 { 4 } else { 2 };
+                                let map_rows = rows.saturating_sub(reserved);
                                 execute!(stdout, MoveTo(cols / 2, map_rows / 2))?;
                                 print!("\x1B[1;33m⌖\x1B[0m");
-                                render_bottom_ui(&app.status, cols, rows);
+                                ui::render_bottom_ui(&app, &stations, map.zoom, cols, rows)?;
                                 stdout.flush()?;
 
                                 if player.play(&s.stream_url) {
-                                    app.update_status_playing(&s.name, &s.city);
+                                    app.playing_idx = Some(i);
+                                    app.update_status_playing(&s.id, &s.name, &s.city);
                                 } else {
-                                    app.status = "Error: mpv not installed. Run: sudo apt install mpv".into();
+                                    app.station_info = "Error: mpv not installed. Run: sudo apt install mpv".into();
                                 }
                             }
                         }
 
+                        // Space: Toggle Play / Pause
                         KeyCode::Char(' ') => {
-                            player.stop();
-                            app.update_status_stopped();
+                            app.flash_key(' ');
+                            if player.is_playing() {
+                                player.stop();
+                                app.playing_idx = None;
+                                if let Some(i) = app.selected {
+                                    let s = &stations[i];
+                                    app.update_status_stopped(&s.id, &s.name, &s.city);
+                                }
+                            } else if let Some(i) = app.selected {
+                                let s = &stations[i];
+                                app.update_status_buffering(&s.name, &s.city);
+                                
+                                let frame = map.render().await?;
+                                print!("\x1B[H{}", frame);
+                                let reserved = if app.show_shortcuts && rows >= 12 { 4 } else { 2 };
+                                let map_rows = rows.saturating_sub(reserved);
+                                execute!(stdout, MoveTo(cols / 2, map_rows / 2))?;
+                                print!("\x1B[1;33m⌖\x1B[0m");
+                                ui::render_bottom_ui(&app, &stations, map.zoom, cols, rows)?;
+                                stdout.flush()?;
+
+                                if player.play(&s.stream_url) {
+                                    app.playing_idx = Some(i);
+                                    app.update_status_playing(&s.id, &s.name, &s.city);
+                                } else {
+                                    app.station_info = "Error: mpv not installed. Run: sudo apt install mpv".into();
+                                }
+                            }
                         }
 
                         _ => {
@@ -220,10 +268,20 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
-        // Check if mpv process has exited on its own
+        // Clear key flash after 150ms
+        if let Some((_, time)) = app.last_key {
+            if time.elapsed() > Duration::from_millis(150) {
+                app.last_key = None;
+                needs_redraw = true;
+            }
+        }
+
         if player.is_playing() && player.try_reap() {
-            app.update_status_stopped();
-            app.status = format!("⚠ Stream ended  {}", app.status);
+            app.playing_idx = None;
+            if let Some(i) = app.selected {
+                let s = &stations[i];
+                app.update_status_stopped(&s.id, &s.name, &s.city);
+            }
             needs_redraw = true;
         }
 
@@ -231,7 +289,8 @@ async fn main() -> anyhow::Result<()> {
             let frame = map.render().await?;
             print!("\x1B[H{}", frame);
 
-            let map_rows = rows.saturating_sub(3);
+            let reserved = if app.show_shortcuts && rows >= 12 { 4 } else { 2 };
+            let map_rows = rows.saturating_sub(reserved);
             let center_x = cols / 2;
             let center_y = map_rows / 2;
             if map_rows > 0 {
@@ -239,7 +298,7 @@ async fn main() -> anyhow::Result<()> {
                 print!("\x1B[1;33m⌖\x1B[0m");
             }
 
-            render_bottom_ui(&app.status, cols, rows);
+            ui::render_bottom_ui(&app, &stations, map.zoom, cols, rows)?;
             stdout.flush()?;
             needs_redraw = false;
         }
@@ -255,38 +314,4 @@ async fn main() -> anyhow::Result<()> {
 fn pan_step(zoom: f64) -> f64 {
     let step = 10.0 / 2.0_f64.powf(zoom);
     step.clamp(0.02, 15.0)
-}
-
-fn render_bottom_ui(status: &str, cols: u16, rows: u16) {
-    if rows < 2 {
-        return;
-    }
-    let sep_row = rows.saturating_sub(2);
-    let status_row = rows.saturating_sub(1);
-
-    // 1. Render separator line (subtle dim gray), strictly clamped to `cols` width
-    let _ = execute!(std::io::stdout(), MoveTo(0, sep_row));
-    let sep_len = (cols as usize).min(800);
-    print!("\x1B[2K\x1B[90m{}\x1B[0m", "─".repeat(sep_len));
-
-    // 2. Render status bar with safe truncation/padding to prevent wrapping/warping
-    let _ = execute!(std::io::stdout(), MoveTo(0, status_row));
-    print!("\x1B[2K");
-
-    let max_len = cols as usize;
-    let truncated_status = if status.chars().count() > max_len {
-        let truncated: String = status.chars().take(max_len.saturating_sub(3)).collect();
-        format!("{}...", truncated)
-    } else {
-        status.to_string()
-    };
-
-    if let Some(split_pos) = truncated_status.find("  |  ") {
-        let info = &truncated_status[..split_pos];
-        let hints = &truncated_status[split_pos..];
-        print!("\x1B[1;36m{}\x1B[0m", info);
-        print!("\x1B[2;37m{}\x1B[0m", hints);
-    } else {
-        print!("\x1B[1;36m{}\x1B[0m", truncated_status);
-    }
 }

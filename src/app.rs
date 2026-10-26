@@ -1,57 +1,105 @@
+use std::collections::HashSet;
+use std::time::Instant;
+
 pub struct App {
     pub selected: Option<usize>,
-    pub status: String,
+    pub playing_idx: Option<usize>,
+    pub station_info: String,
     pub is_playing: bool,
     pub is_buffering: bool,
+    pub favorites: HashSet<String>,
+    pub show_shortcuts: bool,
+    pub last_key: Option<(char, Instant)>,
 }
 
 impl App {
     pub fn new() -> Self {
         Self {
             selected: None,
-            status: String::new(),
+            playing_idx: None,
+            station_info: String::new(),
             is_playing: false,
             is_buffering: false,
+            favorites: HashSet::new(),
+            show_shortcuts: true,
+            last_key: None,
         }
     }
 
-    /// Build status bar text for the idle (browsing) state using Nerd Font icons.
-    pub fn update_status_idle(&mut self, station_name: &str, city: &str) {
-        self.is_playing = false;
-        self.is_buffering = false;
-        if city.is_empty() {
-            self.status = format!("󰓃 {}  |  [Enter] Play  [n/p] Next/Prev  [WASD] Pan  [+/-] Zoom  [q] Quit", station_name);
+    pub fn flash_key(&mut self, ch: char) {
+        self.last_key = Some((ch, Instant::now()));
+    }
+
+    pub fn toggle_shortcuts(&mut self) {
+        self.show_shortcuts = !self.show_shortcuts;
+    }
+
+    pub fn toggle_favorite(&mut self, station_id: &str, station_name: &str, city: &str) -> bool {
+        let is_fav = if self.favorites.contains(station_id) {
+            self.favorites.remove(station_id);
+            false
         } else {
-            self.status = format!("󰓃 {}  —  {}  |  [Enter] Play  [n/p] Next/Prev  [WASD] Pan  [+/-] Zoom  [q] Quit", station_name, city);
+            self.favorites.insert(station_id.to_string());
+            true
+        };
+        self.update_status_for_current(station_id, station_name, city);
+        is_fav
+    }
+
+    pub fn update_status_for_current(&mut self, station_id: &str, station_name: &str, city: &str) {
+        let fav_icon = if self.favorites.contains(station_id) { "♥" } else { "♡" };
+
+        if self.is_buffering {
+            self.station_info = format!("󰑮 Connecting to {}...", station_name);
+        } else if self.is_playing {
+            self.station_info = if city.is_empty() {
+                format!("󰐊 LIVE: {} {}", fav_icon, station_name)
+            } else {
+                format!("󰐊 LIVE: {} {}  —  {}", fav_icon, station_name, city)
+            };
+        } else {
+            self.station_info = if city.is_empty() {
+                format!("󰓃 {} {}", fav_icon, station_name)
+            } else {
+                format!("󰓃 {} {}  —  {}", fav_icon, station_name, city)
+            };
         }
     }
 
-    /// Build status bar text for the buffering/connecting state.
-    pub fn update_status_buffering(&mut self, station_name: &str, city: &str) {
+    pub fn update_status_idle(&mut self, station_id: &str, station_name: &str, city: &str) {
+        let fav_icon = if self.favorites.contains(station_id) { "♥" } else { "♡" };
+        self.station_info = if city.is_empty() {
+            format!("󰓃 {} {}", fav_icon, station_name)
+        } else {
+            format!("󰓃 {} {}  —  {}", fav_icon, station_name, city)
+        };
+    }
+
+    pub fn update_status_buffering(&mut self, station_name: &str, _city: &str) {
         self.is_buffering = true;
         self.is_playing = false;
-        if city.is_empty() {
-            self.status = format!("󰑮 Connecting to {}...  |  [Space] Stop  [q] Quit", station_name);
-        } else {
-            self.status = format!("󰑮 Connecting to {} — {}...  |  [Space] Stop  [q] Quit", station_name, city);
-        }
+        self.station_info = format!("󰑮 Connecting to {}...", station_name);
     }
 
-    /// Build status bar text for the playing state.
-    pub fn update_status_playing(&mut self, station_name: &str, city: &str) {
+    pub fn update_status_playing(&mut self, station_id: &str, station_name: &str, city: &str) {
         self.is_playing = true;
         self.is_buffering = false;
-        if city.is_empty() {
-            self.status = format!("󰐊 LIVE: {}  |  [Space] Stop  [n/p] Next/Prev  [+/-] Zoom  [q] Quit", station_name);
+        let fav_icon = if self.favorites.contains(station_id) { "♥" } else { "♡" };
+        self.station_info = if city.is_empty() {
+            format!("󰐊 LIVE: {} {}", fav_icon, station_name)
         } else {
-            self.status = format!("󰐊 LIVE: {}  —  {}  |  [Space] Stop  [n/p] Next/Prev  [+/-] Zoom  [q] Quit", station_name, city);
-        }
+            format!("󰐊 LIVE: {} {}  —  {}", fav_icon, station_name, city)
+        };
     }
 
-    /// Build status bar text for the stopped state.
-    pub fn update_status_stopped(&mut self) {
+    pub fn update_status_stopped(&mut self, station_id: &str, station_name: &str, city: &str) {
         self.is_playing = false;
         self.is_buffering = false;
-        self.status = "󰓛 Stopped  |  [Enter] Play  [n/p] Next/Prev  [WASD] Pan  [+/-] Zoom  [q] Quit".into();
+        let fav_icon = if self.favorites.contains(station_id) { "♥" } else { "♡" };
+        self.station_info = if city.is_empty() {
+            format!("󰓛 Stopped: {} {}", fav_icon, station_name)
+        } else {
+            format!("󰓛 Stopped: {} {}  —  {}", fav_icon, station_name, city)
+        };
     }
 }
