@@ -90,13 +90,26 @@ impl Renderer {
             }
         }
 
-        // Fetch tile data
+        // Fetch tile data concurrently in parallel
+        let mut tasks = Vec::with_capacity(tiles.len());
+        for tile in &tiles {
+            let ts = self.tile_source.clone();
+            let xyz = tile.xyz;
+            tasks.push(tokio::spawn(async move {
+                let res = ts.get_tile(xyz.2, xyz.0, xyz.1).await;
+                (xyz, res)
+            }));
+        }
+
+        let mut fetched_map = HashMap::new();
+        for task in tasks {
+            if let Ok((xyz, Ok(data))) = task.await {
+                fetched_map.insert(xyz, data);
+            }
+        }
+
         for tile in &mut tiles {
-            if let Ok(data) = self
-                .tile_source
-                .get_tile(tile.xyz.2, tile.xyz.0, tile.xyz.1)
-                .await
-            {
+            if let Some(data) = fetched_map.remove(&tile.xyz) {
                 tile.data = Some(data);
             }
         }
