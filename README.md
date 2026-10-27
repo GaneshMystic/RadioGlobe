@@ -46,7 +46,7 @@ _(For detailed compilation instructions across Linux, macOS, and Windows, see [B
 
 ```bash
 # Clone the repository
-git clone https://github.com/MysticGanesh/RadioGlobe.git
+git clone https://github.com/GaneshMystic/RadioGlobe.git
 cd RadioGlobe
 
 # Build and run in release mode
