@@ -9,7 +9,9 @@
 [![mpv Audio](https://img.shields.io/badge/Audio-mpv--backend-success?style=flat-square&logo=vlc)](https://mpv.io/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 
-*Explore global radio stations with smooth geospatial panning, zooming, and interactive rendering directly in your terminal.*
+![GitGraph Preview](assets/screenshot.png)
+
+_Explore global radio stations with smooth geospatial panning, zooming, and interactive rendering directly in your terminal. Play random radio from differnt parts of the world._
 
 </div>
 
@@ -30,14 +32,15 @@
 ### Prerequisites
 
 Ensure you have the following installed on your system:
+
 1. **Rust Toolchain** (Edition 2021+) — [Install Rust](https://www.rust-lang.org/)
 2. **`mpv` Audio Player** — Required for stream decoding and playback:
-   - *Debian / Ubuntu*: `sudo apt install mpv`
-   - *macOS*: `brew install mpv`
-   - *Arch Linux*: `sudo pacman -S mpv`
+   - _Debian / Ubuntu_: `sudo apt install mpv`
+   - _macOS_: `brew install mpv`
+   - _Arch Linux_: `sudo pacman -S mpv`
 3. **A Nerd Font** — Recommended for crisp UI icons and status badges in your terminal emulator.
 
-*(For detailed compilation instructions across Linux, macOS, and Windows, see [BUILDGUIDE.md](BUILDGUIDE.md))*
+_(For detailed compilation instructions across Linux, macOS, and Windows, see [BUILDGUIDE.md](BUILDGUIDE.md))_
 
 ### Build and Run
 
@@ -54,17 +57,17 @@ cargo run --release
 
 ## ⌨️ Controls & Interactive Keymaps
 
-| Key | Action | Description |
-| :--- | :--- | :--- |
-| `Space` | Play / Pause | Toggle audio playback for the active station |
-| `Enter` | Select & Play | Focus and connect to the currently highlighted station |
-| `f` | Toggle Favorite | Bookmark or unbookmark the selected station (`♥`) |
-| `h j k l` / `WASD` / `Arrows` | Pan Map | Navigate across the global world map view |
-| `i` / `+` | Zoom In | Zoom into detailed regional station clusters |
-| `o` / `-` | Zoom Out | Zoom out for global macro view |
-| `n` / `p` | Next / Previous | Jump sequentially through available stations |
-| `Tab` | Tab Toggle | Switch between full explorer and compact control modes |
-| `q` | Quit | Safely stop audio stream and exit application |
+| Key                           | Action          | Description                                            |
+| :---------------------------- | :-------------- | :----------------------------------------------------- |
+| `Space`                       | Play / Pause    | Toggle audio playback for the active station           |
+| `Enter`                       | Select & Play   | Focus and connect to the currently highlighted station |
+| `f`                           | Toggle Favorite | Bookmark or unbookmark the selected station (`♥`)      |
+| `h j k l` / `WASD` / `Arrows` | Pan Map         | Navigate across the global world map view              |
+| `i` / `+`                     | Zoom In         | Zoom into detailed regional station clusters           |
+| `o` / `-`                     | Zoom Out        | Zoom out for global macro view                         |
+| `n` / `p`                     | Next / Previous | Jump sequentially through available stations           |
+| `Tab`                         | Tab Toggle      | Switch between full explorer and compact control modes |
+| `q`                           | Quit            | Safely stop audio stream and exit application          |
 
 ---
 

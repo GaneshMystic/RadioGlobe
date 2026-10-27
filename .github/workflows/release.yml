@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-release:
+    name: Build Release (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin_name: radioglobe
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            bin_name: radioglobe
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin_name: radioglobe.exe
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build Release Binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package Binary (Tar/Zip)
+        shell: bash
+        run: |
+          mkdir -p dist
+          if [ "${{ matrix.os }}" == "windows-latest" ]; then
+            cp target/${{ matrix.target }}/release/radioglobe.exe dist/
+            cp stations.json dist/
+            cp README.md dist/
+            cp LICENSE dist/
+            cd dist && 7z a radioglobe-windows-x86_64.zip *
+          else
+            cp target/${{ matrix.target }}/release/radioglobe dist/
+            cp stations.json dist/
+            cp README.md dist/
+            cp LICENSE dist/
+            cd dist && tar -czvf radioglobe-${{ matrix.target }}.tar.gz *
+          fi
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
