@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version tag (e.g. v0.1.0-alpha.1)'
+        required: true
+        default: 'v0.1.0-alpha.1'
 
 jobs:
   build-release:
@@ -56,5 +62,9 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: dist/*
+          tag_name: ${{ github.event.inputs.version || github.ref_name }}
+          name: Release ${{ github.event.inputs.version || github.ref_name }}
+          draft: false
+          prerelease: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
