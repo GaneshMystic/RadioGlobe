@@ -106,7 +106,11 @@ async fn main() -> anyhow::Result<()> {
 
     let (mut cols, mut rows) = terminal::size()?;
 
-    let mut map = MapState::new(MapConfig::default()).await?;
+    let mut map_config = MapConfig::default();
+    map_config.max_zoom = 14.0;
+    map_config.simplify_polylines = true;
+
+    let mut map = MapState::new(map_config).await?;
     map.set_size_from_terminal(cols, rows);
     map.fit_world();
 
@@ -116,9 +120,11 @@ async fn main() -> anyhow::Result<()> {
 
     let mut needs_redraw = true;
     let mut running = true;
+    let mut last_render_key: Option<(u64, u64, u64, u16, u16)> = None;
+    let mut cached_frame = String::new();
 
     while running {
-        // Drain all pending events in the queue to batch key repeats and prevent stuttering
+        // Drain all pending events in the queue to batch key repeats instantly in memory
         if event::poll(Duration::from_millis(16))? {
             while event::poll(Duration::from_millis(0))? {
                 match event::read()? {
@@ -219,7 +225,22 @@ async fn main() -> anyhow::Result<()> {
                                     let s = &stations[i];
                                     app.update_status_buffering(&s.name, &s.city);
                                     
-                                    let frame = map.render().await?;
+                                    let render_key = (
+                                        map.center_lat.to_bits(),
+                                        map.center_lon.to_bits(),
+                                        map.zoom.to_bits(),
+                                        cols,
+                                        rows,
+                                    );
+                                    let frame = if last_render_key == Some(render_key) && !cached_frame.is_empty() {
+                                        cached_frame.clone()
+                                    } else {
+                                        let f = map.render().await?;
+                                        last_render_key = Some(render_key);
+                                        cached_frame = f.clone();
+                                        f
+                                    };
+
                                     print!("\x1B[H{}", frame);
                                     let reserved = if app.show_shortcuts && rows >= 4 && cols >= 60 { 4 } else if app.show_shortcuts && rows >= 3 { 3 } else { 2 };
                                     let map_rows = rows.saturating_sub(reserved);
@@ -272,8 +293,24 @@ async fn main() -> anyhow::Result<()> {
             needs_redraw = true;
         }
 
-        if needs_redraw {
-            let frame = map.render().await?;
+        // DEBOUNCE / THROTTLE: Only render if redraw is needed AND no more input events are pending in the queue
+        if needs_redraw && !event::poll(Duration::from_millis(0))? {
+            let render_key = (
+                map.center_lat.to_bits(),
+                map.center_lon.to_bits(),
+                map.zoom.to_bits(),
+                cols,
+                rows,
+            );
+            let frame = if last_render_key == Some(render_key) && !cached_frame.is_empty() {
+                cached_frame.clone()
+            } else {
+                let f = map.render().await?;
+                last_render_key = Some(render_key);
+                cached_frame = f.clone();
+                f
+            };
+
             print!("\x1B[H{}", frame);
 
             let reserved = if app.show_shortcuts && rows >= 4 && cols >= 60 { 4 } else if app.show_shortcuts && rows >= 3 { 3 } else { 2 };
